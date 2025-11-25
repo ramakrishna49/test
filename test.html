@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.7.1/gsap.min.js"></script>
+    <title>Particle Text Morph</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { background:#000; overflow:hidden; font-family:'Inter',sans-serif; color:white; }
+        #container { position:fixed; top:0; left:0; width:100%; height:100%; }
+        /* You can remove or hide the input if you want */
+        .input-container { display:none; } /* ← Hides the input box completely */
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+
+    <!-- Input is still in DOM but hidden (kept in case you want it back later) -->
+    <div class="input-container">
+        <div class="input-wrapper">
+            <input type="text" id="morphText" placeholder="Type something..." maxlength="20">
+            <button id="typeBtn">Create</button>
+        </div>
+    </div>
+
+<script>
+    let scene, camera, renderer, particles;
+    const count = 12000;
+    let currentState = 'sphere';
+
+    // ←←← CHANGE THIS TO WHATEVER NAME/TEXT YOU WANT ←←←
+    const DEFAULT_TEXT = "Gigglezen";   // ← Edit here! (max ~15 chars looks best)
+    // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+
+    function init() {
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        renderer = new THREE.WebGLRenderer({ antialias:true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x000000);
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        camera.position.z = 25;
+        createParticles();
+        animate();
+
+        // Automatically morph to the default text after 1 second (so sphere is visible first)
+        setTimeout(() => morphToText(DEFAULT_TEXT), 1000);
+    }
+
+    function createParticles() {
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(count * 3);
+        const colors = new Float32Array(count * 3);
+
+        function sphericalDistribution(i) {
+            const phi = Math.acos(-1 + (2 * i) / count);
+            const theta = Math.sqrt(count * Math.PI) * phi;
+            return {
+                x: 8 * Math.cos(theta) * Math.sin(phi),
+                y: 8 * Math.sin(theta) * Math.sin(phi),
+                z: 8 * Math.cos(phi)
+            };
+        }
+
+        for (let i = 0; i < count; i++) {
+            const p = sphericalDistribution(i);
+            positions[i*3]   = p.x + (Math.random()-0.5)*0.5;
+            positions[i*3+1] = p.y + (Math.random()-0.5)*0.5;
+            positions[i*3+2] = p.z + (Math.random()-0.5)*0.5;
+
+            const depth = Math.sqrt(p.x*p.x + p.y*p.y + p.z*p.z) / 8;
+            const color = new THREE.Color().setHSL(0.5 + depth*0.2, 0.7, 0.4 + depth*0.3);
+            colors[i*3]   = color.r;
+            colors[i*3+1] = color.g;
+            colors[i*3+2] = color.b;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({
+            size: 0.08,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            transparent: true,
+            opacity: 0.8,
+            sizeAttenuation: true
+        });
+
+        if (particles) scene.remove(particles);
+        particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+    }
+
+    function createTextPoints(text) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const fontSize = 100;
+        const padding = 20;
+
+        ctx.font = `bold ${fontSize}px Arial`;
+        const metrics = ctx.measureText(text);
+        canvas.width  = metrics.width + padding*2;
+        canvas.height = fontSize + padding*2;
+
+        ctx.fillStyle = 'white';
+        ctx.font = `bold ${fontSize}px Arial`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        ctx.fillText(text, canvas.width/2, canvas.height/2);
+
+        const data = ctx.getImageData(0,0,canvas.width,canvas.height).data;
+        const points = [];
+
+        for (let i = 0; i < data.length; i += 4) {
+            if (data[i] > 128) { // white pixel
+                const x = (i/4) % canvas.width;
+                const y = Math.floor((i/4) / canvas.width);
+                if (Math.random() < 0.3) { // density control
+                    points.push({
+                        x: (x - canvas.width/2) / (fontSize/10),
+                        y: -(y - canvas.height/2) / (fontSize/10)
+                    });
+                }
+            }
+        }
+        return points;
+    }
+
+    function morphToText(text) {
+        currentState = 'text';
+        const textPoints = createTextPoints(text);
+        const posArray = particles.geometry.attributes.position.array;
+        const target = new Float32Array(count * 3);
+
+        // Reset rotation
+        gsap.to(particles.rotation, {x:0, y:0, z:0, duration:0.5});
+
+        for (let i = 0; i < count; i++) {
+            if (i < textPoints.length) {
+                target[i*3]     = textPoints[i].x;
+                target[i*3 + 1] = textPoints[i].y;
+                target[i*3 + 2] = 0;
+            } else {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = Math.random() * 20 + 10;
+                target[i*3]     = Math.cos(angle) * radius;
+                target[i*3 + 1] = Math.sin(angle) * radius;
+                target[i*3 + 2] = (Math.random()-0.5)*10;
+            }
+        }
+
+        // Animate each particle individually (smooth morph)
+        for (let i = 0; i < posArray.length; i += 3) {
+            gsap.to(posArray, {
+                [i]:     target[i],
+                [i+1]:   target[i+1],
+                [i+2]:   target[i+2],
+                duration: 2,
+                ease: "power2.inOut",
+                onUpdate: () => particles.geometry.attributes.position.needsUpdate = true
+            });
+        }
+
+      
+    }
+
+    function morphToCircle() {
+        currentState = 'sphere';
+        const posArray = particles.geometry.attributes.position.array;
+        const colArray = particles.geometry.attributes.color.array;
+        const targetPos = new Float32Array(count * 3);
+        const targetCol = new Float32Array(count * 3);
+
+        function sphericalDistribution(i) {
+            const phi = Math.acos(-1 + (2 * i) / count);
+            const theta = Math.sqrt(count * Math.PI) * phi;
+            return {
+                x: 8 * Math.cos(theta) * Math.sin(phi),
+                y: 8 * Math.sin(theta) * Math.sin(phi),
+                z: 8 * Math.cos(phi)
+            };
+        }
+
+        for (let i = 0; i < count; i++) {
+            const p = sphericalDistribution(i);
+            targetPos[i*3]   = p.x + (Math.random()-0.5)*0.5;
+            targetPos[i*3+1] = p.y + (Math.random()-0.5)*0.5;
+            targetPos[i*3+2] = p.z + (Math.random()-0.5)*0.5;
+
+            const depth = Math.hypot(p.x, p.y, p.z) / 8;
+            const c = new THREE.Color().setHSL(0.5 + depth*0.2, 0.7, 0.4 + depth*0.3);
+            targetCol[i*3]   = c.r;
+            targetCol[i*3+1] = c.g;
+            targetCol[i*3+2] = c.b;
+        }
+
+        for (let i = 0; i < posArray.length; i += 3) {
+            gsap.to(posArray, { [i]:targetPos[i], [i+1]:targetPos[i+1], [i+2]:targetPos[i+2],
+                duration:2, ease:"power2.inOut",
+                onUpdate:()=>particles.geometry.attributes.position.needsUpdate=true });
+        }
+        for (let i = 0; i < colArray.length; i += 3) {
+            gsap.to(colArray, { [i]:targetCol[i], [i+1]:targetCol[i+1], [i+2]:targetCol[i+2],
+                duration:2, ease:"power2.inOut",
+                onUpdate:()=>particles.geometry.attributes.color.needsUpdate=true });
+        }
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if (currentState === 'sphere') particles.rotation.y += 0.002;
+        renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Start everything
+    init();
+</script>
+</body>
+</html>
